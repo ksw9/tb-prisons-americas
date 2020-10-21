@@ -1,0 +1,747 @@
+---
+title: "The escalating tuberculosis crisis in Central and South American prisons"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+library(tidyverse)
+library(prisonbrief)
+library(ggplot2)
+library(sf)
+library(devtools)
+library(tidyr)
+library(viridis)
+library(wesanderson)
+library(gridExtra)
+library(readxl)
+library(foreign)
+library(lubridate)
+library(cowplot)
+library(rgeos)
+library(stats)
+library(devtools)
+library(ggsci)
+library(scales)
+library(pals)
+library(prisonbrief)
+library(utils)
+
+#detach("package:plyr", unload=TRUE)
+options(dplyr.print_max = 1e9)
+
+# Define directories
+data_dir <- '~/Dropbox/TB_Burden_Prisons/perspective/data/' # Change for local data dir.
+fig_dir <- '~/Dropbox/TB_Burden_Prisons/perspective/figures/'# Change for local figures dir.
+setwd(fig_dir)
+```
+
+```{r data organization, echo = FALSE}
+merged_data <- paste(data_dir, 'tb_prisons_ca_sa_merged.csv', sep = '')
+
+df <- read.csv(file = merged_data, stringsAsFactors = FALSE)
+
+# TB rate in prisons and TB rate ratio for plotting.
+df <- df %>%
+  mutate(max_year = max(year[which(!is.na(cases_prison) & !is.na(inc_pop))]), 
+         # Get tb rate in prisons for all available years with reported data.
+         tb_rate_prison_calc = cases_prison/inc_pop* 100000,
+         # Calculate TB notification rate with the WPB population size as denominator; if unavailable, use country reported TB notification rate among PDL.
+         tb_rate_prison_comb = ifelse(!is.na(tb_rate_prison_calc), tb_rate_prison_calc, tb_rate_prison),
+         tbrateratio = tb_rate_prison_comb/c_newinc_100k)
+
+# Define country lists
+ca_countries <- df %>% filter(region == 'Central America') %>% pull(country) %>% unique()
+sa_countries <- df %>% filter(region == 'South America') %>% pull(country) %>% unique()
+
+# For each country, print years available data. 
+for (cty in sort(c(ca_countries, sa_countries))) {
+  print(cty)
+  years = unique(df[which(df$country == cty & !is.na(df$cases_prison)), 'year'])
+  print(years)
+}
+
+```
+
+```{r color palettes, echo = FALSE}
+
+# Country color palettes
+sa_pal <- pal_d3('category20c')(12)
+names(sa_pal) <- sort(sa_countries)
+ca_pal <- pal_d3('category20c')(9)
+names(ca_pal) <- sort(ca_countries)
+
+# Two color palette. 
+col2_pal <- pal_d3('category20c')(4)[3:4]
+names(col2_pal) <- c('Central America','South America')
+
+# 19-color palette.
+cols <- alphabet(n = 19)
+names(cols) <-unique(sort(df$country))
+
+```
+
+```{r abstract, echo = FALSE}
+min_year = 2000  
+max_year = 2017
+
+# Total changes for Central and South America - for 2000-2017 period, only use notified data. 
+df %>% 
+  arrange(country,year) %>%
+  ungroup() %>%
+  # CA and SA only.
+  filter(country %in% c(ca_countries, sa_countries)) %>%
+  group_by(country) %>%
+  arrange(year) %>%
+  filter(!is.na(c_newinc) ) %>%
+  dplyr::summarise(
+    min_year = year[min(which(!is.na(cases_prison)))],
+    max_year = year[max(which(!is.na(cases_prison)))],
+    tb_inc = c_newinc[which(year == max_year)],
+    last_prison = cases_prison[which(year==max_year)], 
+    first_prison = cases_prison[which(year == min_year)], 
+    delt_tb_prison = last_prison - first_prison , 
+    first_total = c_newinc[which(year==min_year)], 
+    last_total = c_newinc[which(year==max_year)], 
+    delt_tb_total = last_total - first_total, 
+    delt_tb_general = delt_tb_total - delt_tb_prison,
+    delt_years = max_year - min_year) %>%
+  ungroup() %>%
+  # Regional totals
+  summarize(first_total = sum(first_total), 
+            last_total = sum(last_total),
+            first_prison = sum(first_prison),
+            last_prison = sum(last_prison),
+            delt_tb_prison = sum(delt_tb_prison), 
+            delt_tb_general = sum(delt_tb_general),
+            delt_tb_total = sum(delt_tb_total)) -> tmp
+tmp
+
+# Total fold increase of TB among the inc. population and the proportion of total cases among PDL.
+fold_increase <- tmp %>%
+  summarize(increase = (last_prison - first_prison)/first_prison * 100, 
+            prop_prison = last_prison/ last_total)
+fold_increase
+```
+
+```{r Fig 1: country-level changes, echo = FALSE}
+## Country level dataframe.
+df %>% 
+  ungroup() %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  dplyr::summarize(
+    first_total = c_newinc[which(year == 2011)], 
+    last_total = c_newinc[which(year == 2017)], 
+    last_prison = cases_prison_spline[which(year == 2017)], 
+    first_prison = cases_prison_spline[which(year == 2011)],
+    delt_tb_prison = last_prison - first_prison , 
+    delt_tb_total = last_total - first_total,
+    delt_tb_general = delt_tb_total - delt_tb_prison,
+    subplot = 'country',
+    location = country[1]) %>%
+  mutate(subplot = 'country', 
+         location = country) -> country_df
+
+# Look at countries with greatest burden.
+country_df %>%
+  arrange(delt_tb_prison)
+
+# Total changes for Central and South America.
+df %>% 
+  ungroup() %>%
+  arrange(country, year) %>%
+  group_by(country) %>%
+  dplyr::summarize(
+    first_total = c_newinc[which(year == 2011)], 
+    last_total = c_newinc[which(year == 2017)], 
+    last_prison = cases_prison_spline[which(year == 2017)], 
+    first_prison = cases_prison_spline[which(year == 2011)],
+    delt_tb_prison = last_prison - first_prison , 
+    delt_tb_total = last_total - first_total,
+    delt_tb_general = delt_tb_total - delt_tb_prison,
+    subplot = 'country',
+    location = region[1], 
+    subplot = "region") %>%
+  group_by(location) %>%
+  # Regional totals
+  dplyr::summarize(first_total = sum(first_total),
+                   last_total = sum(last_total),
+                   first_prison = sum(first_prison),
+                   last_prison = sum(last_prison),
+                   delt_tb_prison = sum(delt_tb_prison), 
+                   delt_tb_general = sum(delt_tb_general),
+                   delt_tb_total = sum(delt_tb_total)) -> region_df
+region_df
+
+# Define plot order by total change in TB
+plot_order <-country_df %>%
+  arrange(delt_tb_total)%>%
+  pull(location)
+
+# Combine country-level and region-level dataframes for plotting.
+country_df %>%
+  bind_rows(region_df) %>%
+  # Arrange by the delta TB among the total population.
+  arrange(delt_tb_total) %>%
+  # Factor country variable so that the ordering is preserved in the plot.
+  mutate(location =  factor(location, levels=c(plot_order,'South America',  'Central America'))) %>%  
+  pivot_longer(cols = c(delt_tb_prison,delt_tb_general), names_to = 'pop', names_prefix = 'delt_tb_',values_to = 'delta') %>%
+  select(location, subplot,pop, delta) %>%
+  ggplot(aes(x = location, y = delta, fill = pop, by = pop)) + 
+  geom_bar(stat = 'identity', width = 0.8)  + 
+  scale_y_continuous(breaks=seq(-2500, 10000,2500)) +
+  coord_flip() +
+  facet_grid(rows = vars(subplot),scales = 'free', space = 'free') +
+  ylab('Change in notified tuberculosis cases') + 
+  xlab('Country') + 
+  theme_classic(base_size = 16) + 
+  theme(strip.text.y = element_blank()) + 
+  scale_fill_manual(name = 'Population', labels = c('General population','Incarcerated population'), 
+                    values = wes_palette("Zissou1", 2, type = "continuous")) +
+  geom_hline(yintercept = 0, weight = 2) +
+  # Add spacing between facets
+  theme(panel.spacing.y=unit(2, "lines")) -> delta_tb
+delta_tb
+
+#ggsave(delta_tb, file = 'delta_tb_cases_2011-2017.pdf', width = 12, height = 10)
+
+# Look at stats. 
+country_df
+region_df
+
+```
+
+```{r Fig 2 (b,c): proportion cases among PDL, echo = FALSE}
+## Temporal trends in proportion TB among PDL.
+min_year = 2008
+max_year = 2018
+
+# CA - reported proportion of cases among PDL
+g13 <-  df %>% 
+  group_by(country) %>%
+  arrange(country,year) %>%
+  filter(country %in% c(ca_countries)) %>%
+  filter(country != 'Belize') %>%
+  filter(year >= min_year & year <= max_year ) %>%
+  mutate(prop = cases_prison/c_newinc) %>%
+  ggplot(aes(x = year,y = prop*100,fill=country)) + 
+  geom_line(aes(colour = country), size = 1.3) + 
+  scale_x_continuous(breaks=seq(2008, 2018, by = 2), limits =  c(2008,2018)) +
+  facet_wrap(~region, scales = 'free_y') +
+  theme_classic(base_size = 14) + 
+  ylab('Percentage TB cases among PDL') + 
+  xlab('Year') +
+  scale_colour_manual(values = ca_pal, 
+                      guide = guide_legend(ncol = 2, position = 'bottom')) + 
+  guides(fill= guide_legend(title="Region")) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), 
+        legend.title = element_blank(), legend.position = 'bottom')   
+g13
+
+# Get legend
+g13_leg <- get_legend(g13)
+
+# Remove legend from plot to add back w/ cowplot
+g13 <- g13 + theme(legend.position = "none")
+
+# SA - reported proportion of cases among PDL
+g14 <-  df %>% 
+  group_by(country) %>%
+  arrange(country,year) %>%
+  filter(country %in% c(sa_countries)) %>%
+  filter(!country %in% c('Suriname','Uruguay', 'Guyana','Chile')) %>%
+  filter(year >= min_year & year <= max_year ) %>%
+  filter(!is.na(cases_prison)) %>%
+  mutate(prop = cases_prison/c_newinc) %>%
+  ggplot(aes(x = year ,y = prop*100,fill=country)) + 
+  geom_line(aes(colour = country), size = 1.3) + 
+  scale_x_continuous(breaks=seq(2008, 2018, by = 2), limits =  c(2008,2018)) +
+  facet_wrap(~region, scales = 'free_y') +
+  theme_classic(base_size = 14) + 
+  ylab('Percentage TB cases among PDL') + 
+  xlab('Year') +
+  scale_colour_manual(values = sa_pal, 
+                      guide = guide_legend(ncol = 2, position = 'bottom')) + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), 
+        legend.title = element_blank(), legend.position = 'bottom')  
+g14
+
+# Get legend
+g14_leg <- get_legend(g14)
+
+# Remove legend from plot to add back w/ cowplot
+g14 <- g14 + theme(legend.position = "none")
+
+# Stats - get proportion of TB among prisoners in most recent year. 
+df %>% 
+  group_by(country) %>%
+  mutate(max_year = max(year[which(!is.na(cases_prison))])) %>%
+  filter(country %in% c( ca_countries, sa_countries) & year == max_year) %>%
+  mutate(prop = cases_prison/c_newinc) %>%
+  arrange(prop) %>%
+  select(prop, year, cases_prison,c_newinc)
+
+# Stats - get change in proportion of TB among prisoners.
+max_year = 2017
+min_year = 2011
+df %>% 
+  group_by(country) %>%
+  arrange(country,-year) %>%
+  filter(country %in% c(ca_countries, sa_countries)) %>%
+  mutate(prop = cases_prison_spline/c_newinc) %>%
+  summarise(#last_year = max(year), 
+    last_prop = prop[which(year == max_year)], 
+    # first_year = min(year), 
+    first_prop = prop[which(year == min_year)],
+    change = (last_prop - first_prop), 
+    prop_change = ((last_prop - first_prop)/first_prop)) %>%
+  arrange(prop_change)
+
+# In most recent reporting year, get total proportion tb in prisoners
+df %>% 
+  group_by(country) %>%
+  arrange(country,-year) %>%
+  #filter(!is.na(cases_prison) & !is.na(c_newinc)) %>%
+  filter(country %in% c(ca_countries, sa_countries)) %>%
+  #slice(1) %>%
+  # Get the earliest reporting year.
+  filter(year %in% c(2017)) %>%
+  #slice(1) %>%
+  ungroup() %>%
+  summarize(prop = sum(cases_prison_spline)/sum(c_newinc))
+```
+
+```{r PAF, echo = FALSE}
+# Calculate PAF trends.
+df_paf <- df %>% 
+  group_by(country, year) %>%
+  arrange(country,-year) %>%
+  filter(country %in% c(ca_countries, sa_countries)) %>%
+  mutate(tb_rate_prisons = cases_prison_spline/inc_pop_spline * 100000,
+         tbrateratio = tb_rate_prisons/c_newinc_100k, 
+         prop_incarcerated = inc_pop_spline/e_pop_num, 
+         paf = (prop_incarcerated * (tbrateratio - 1)) /
+           (prop_incarcerated * (tbrateratio - 1) +1) ,
+         prop_cases = cases_prison_spline/c_newinc, 
+         excess = c_newinc * paf) %>%
+  select(prop_incarcerated,tbrateratio, paf, prop_cases, excess, c_newinc, tb_rate_prisons, prop_incarcerated) 
+
+# Summarize PAF trends.
+df_paf %>%
+  ungroup() %>%
+  group_by(country) %>%
+  arrange(year) %>%
+  summarize(min_year = year[min(which(!is.na(paf)))], 
+            max_year = year[max(which(!is.na(paf)))], 
+            first_paf = paf[which(year == min_year)],
+            last_paf = paf[which(year == max_year)], 
+            paf_change = last_paf - first_paf) %>%
+  arrange(last_paf)
+
+# Summarize excess TB cases in most recent year of reported data
+df_paf %>%
+  ungroup() %>%
+  group_by(country) %>%
+  arrange(year) %>%
+  summarize(first_paf = paf[which(year == 2011)],
+            last_paf = paf[which(year == 2017)], 
+            last_inc = c_newinc[max(which(year == 2017))],
+            excess = last_paf * last_inc) %>%
+  arrange(last_paf) %>%
+  summarize(sum(excess))
+
+# Total PAF in 2011 and 2017
+df %>% 
+  ungroup() %>%
+  arrange(country,-year) %>%
+  group_by(year) %>%
+  filter(country %in% c(ca_countries, sa_countries) & year %in% c(2011,2017)) %>%
+  summarize(prison_cases = sum(cases_prison_spline),
+            all_cases = sum(c_newinc), 
+            prison_pop = sum(inc_pop_spline), 
+            all_pop = sum(e_pop_num),
+            prop_incarcerated = prison_pop/all_pop, 
+            tbrateratio = (prison_cases/prison_pop)/(all_cases/all_pop), 
+            paf = (prop_incarcerated * (tbrateratio - 1)) /
+              (prop_incarcerated * (tbrateratio - 1) +1))
+
+```
+
+```{r Fig 2 a: map, echo = FALSE}
+# Retrieve the map data
+sa_ca_maps <- map_data("world", region = c(sa_countries, ca_countries))
+
+# Compute the centroid as the mean longitude and lattitude for label coordinate for country's names
+sa_ca_data <- sa_ca_maps %>%
+  group_by(region) %>%
+  summarise(long = mean(long), lat = mean(lat))
+
+# Map incidence in PDL in most recent year with available data
+m1 <- df %>%
+  group_by(country) %>%
+  mutate(max_year = max(year[which(!is.na(tb_rate_prison_comb))])) %>%
+  filter(year == max_year) %>%
+  #select(tb_rate_prison_comb) %>%
+  mutate(factored_tb_rate = (cut(tb_rate_prison_comb, breaks = c(0, 100,500,1000,2000,6000), 
+                                 labels = c('<100', '100-499', '500-999', '1000-1999','2000-6000')))) %>%
+  
+  left_join(sa_ca_maps, by = c('country' = 'region' )) %>%
+  ggplot( aes(long, lat, group = group)) +
+  geom_polygon(aes(fill = factored_tb_rate), color = "white") +
+  scale_fill_viridis_d(option = "A") + 
+  labs(fill = "Notification rate among PDL\n(per 100,0000)" ) + 
+  xlim(-100,-33) +
+  theme_classic() +
+  theme(legend.position = 'right', 
+        axis.line = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank()) 
+
+m1
+
+# Combine proportion plots 
+p4 <- plot_grid(g13,g14,g13_leg, g14_leg,
+                labels = c('b','c','',''),
+                rel_heights = c(1, .2), 
+                nrow = 2, 
+                hjust = -1, 
+                scale = 0.9)
+p4
+
+# Combine notification rate map with proportions plot.
+par(mar = c(4,2,2,2)) 
+m_comb <- plot_grid(m1, p4, rel_heights= c(1, 1), ncol=1,  labels = c('a',''))
+m_comb
+#ggsave(m_comb, filename = 'notification_map_perc_pdl_spline.pdf', height = 12, width = 8)
+```
+
+```{r Fig S1: incarceration trends}
+# CA inc rate - reported data
+g1 <- df %>%
+  arrange(country) %>%
+  filter(country %in% ca_countries ) %>%
+  filter(year %in% seq(2000,2018,2)) %>%
+  ggplot(aes(x = year, y = inc_rate*100000, color = country)) +
+  geom_line(size = 2) + 
+  theme_minimal() + 
+  ylab('Incarceration rate (per 100 000)') +
+  xlab('Year') + 
+  scale_color_manual(name = NULL, values = ca_pal, guide = guide_legend(ncol = 1)) + 
+  theme_classic(base_size = 14) +
+  scale_x_continuous(breaks = seq(2000,2018,2)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = 'bottom', legend.direction = 'horizontal') + 
+  guides(color = guide_legend(label.position = "bottom", nrow = 1))
+g1
+
+# SA inc rate - reported data
+g2 <- df %>%
+  arrange(country) %>%
+  filter(country %in% sa_countries ) %>%
+  filter(year %in% seq(2000,2018,2)) %>%
+  ggplot(aes(x = year, y = inc_rate*100000, color = country)) +
+  geom_line(size = 2) + 
+  theme_minimal() + 
+  ylab('Incarceration rate (per 100 000)') +
+  xlab('Year') + 
+  scale_color_manual(name = NULL, values = sa_pal, guide = guide_legend(ncol = 1)) + 
+  theme_classic(base_size = 14) +
+  scale_x_continuous(breaks = seq(2000,2018,2)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), legend.position = 'bottom', legend.direction = 'horizontal') + 
+  guides(color = guide_legend(label.position = "bottom", nrow = 2, byrow = TRUE))
+g2
+
+# CA inc pop - spline fit
+g5 <- df %>%
+  arrange(country) %>%
+  filter(country %in% ca_countries ) %>%
+  filter(year %in% seq(2000,2018,2)) %>%
+  ggplot(aes(x = year, y = inc_pop_spline/1000, fill = country)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal() + 
+ylab('Incarcerated population (thousands)') +
+  xlab('Year') + 
+  scale_fill_manual(name = NULL, values = ca_pal, guide = guide_legend(ncol = 1)) + 
+  theme_classic(base_size = 14) +
+  scale_x_continuous(breaks = seq(2000,2018,2)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+g5
+
+# Get legend
+ca_leg <- get_legend(g5)
+
+# SA inc pop - spline fit
+g6 <- df %>%
+  arrange(country) %>%
+  filter(country %in% sa_countries ) %>%
+  filter(year %in% seq(2000,2018,2)) %>%
+  ggplot(aes(x = year, y = inc_pop_spline/1000, fill = country)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal() + 
+  ylab('Incarcerated population (thousands)') +
+  xlab('Year') + 
+  scale_fill_manual(name = NULL, values = sa_pal, guide = guide_legend(ncol = 2)) + 
+  theme_classic(base_size = 14) +
+  scale_x_continuous(breaks = seq(2000,2018,2)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+g6
+
+# Get legend
+sa_leg <- get_legend(g6)
+
+# Arrange plots without legends.
+p2 <- plot_grid(
+  g1 + theme(legend.position = 'none'),
+  g5 + theme(legend.position = 'none'), 
+  ca_leg,
+  g2 + theme(legend.position = 'none'), 
+  g6 + theme(legend.position = 'none'),
+  sa_leg,
+  labels = c('a','b','','c','d',''),
+  nrow = 2, 
+  hjust = -1, 
+  scale = 0.9,
+  rel_widths = c(1,1,.8))
+
+p2
+#ggsave(p2, file = 'incarceration_2panel.pdf', height = 8, width = 10)
+
+```
+
+```{r Fig S2: weighted mean incidence, echo = FALSE}
+min_year = 2011
+max_year = 2017
+
+# Country incidence.
+df_country <- df %>% 
+  ungroup() %>%
+  group_by(country) %>%
+  filter(year >= min_year & year <= max_year) %>%
+  # Include only country-years with cases in prison are reported.
+  mutate(type = 'country') %>%
+  pivot_longer(cols = c(tb_rate_prison_comb, c_newinc_100k), names_to = "incarceration_status", values_to = "tb_inc") %>%
+  mutate(incarceration_status = recode(incarceration_status, tb_rate_prison_comb  = "Incarcerated population",c_newinc_100k = "General population"))
+
+# Plot prison case notification rate and general pop incidence.
+g9 <- df_country %>% 
+  ggplot(aes(x = year, y = tb_inc, by = country, color = incarceration_status)) +
+  facet_grid(~region) +
+  geom_line() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  scale_y_continuous(trans='log10') + 
+  scale_color_manual(name = NULL,labels = c('General population','Incarcerated population'), values = wes_palette("Zissou1", 2, type = "continuous") ) +
+  ylab('Tuberculosis notifications (per 100,000)') +
+  xlab('Year') + 
+  theme_classic(base_size = 14) 
+g9
+#ggsave(g9, file = 'notification_rate_2panel.pdf', width = 12, height = 8)
+
+## Plot weighted mean incidence for prisoners and non-prisoners
+df_wmean <- df %>% 
+  filter(country %in% c( ca_countries, sa_countries) & year >= min_year & year <= max_year) %>%
+  ungroup() %>%
+  group_by(year,region) %>%
+  summarize(tb_rate_prisons = sum(cases_prison, na.rm=T)/sum(inc_pop_spline, na.rm=T) * 100000,
+            tb_rate_general = sum(c_newinc, na.rm = T)/sum(e_pop_num, na.rm=T)* 100000, 
+            type = 'weighted_mean') %>%
+  pivot_longer(cols = c(tb_rate_prisons, tb_rate_general), names_to = 'incarceration_status',values_to = "tb_inc") %>%
+  mutate(incarceration_status = recode(incarceration_status, tb_rate_prisons  = 'Incarcerated population',tb_rate_general = "General population"))
+
+# Plot weighted means.
+g10 <- df_wmean %>% 
+    ggplot(aes(x = year, y = tb_inc, color = incarceration_status)) + 
+  facet_grid(~region) +
+  geom_line() +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  #scale_y_continuous(trans='log2') + 
+  scale_color_manual(name = NULL,labels = c('General population','Incarcerated population'), values = wes_palette("Zissou1", 2, type = "continuous") ) +
+  ylab('Tuberculosis incidence (per 100,000)') +
+  xlab('Year')
+g10
+
+# Plot weighted means with country-level in background
+df_all <- bind_rows(df_country,df_wmean)
+
+g11 <- df_all %>% 
+  ggplot(aes(x = year, y = tb_inc, by = country,color = incarceration_status, alpha = type, size = type)) + 
+  facet_grid(~region) +
+  geom_line() +
+  theme_classic(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  scale_y_continuous(trans='log10') + 
+  scale_alpha_discrete(guide = 'none', range = c(0.4,1)) + 
+  scale_size_discrete(range = c(1,2.5), name = '', labels = c('Country','Region')) +
+  scale_color_manual(name = NULL,labels = c('General population','Incarcerated population'), values = wes_palette("Zissou1", 2, type = "continuous") ) +
+  ylab('Tuberculosis case notification rate \n (per 100,000)') +
+  xlab('Year')+ 
+  theme_classic(base_size = 14)
+
+g11
+ggsave(g11, file = paste(fig_dir, 'incidence_rate_wmean_country_2panel.pdf', sep = ''), width = 12, height = 8)
+
+## Stats for changes in weighted mean. 
+df_all %>% 
+  filter(type == 'weighted_mean') %>% 
+  select(region, year, tb_inc, incarceration_status) %>%
+  filter(year %in% c(2011, 2017))
+```
+
+```{r Fig S3: IRR, echo = FALSE}
+gIRR <- df %>% 
+  group_by(country) %>%
+  filter(country %in% c(sa_countries, ca_countries) ) %>%
+  mutate(max_year = max(year[which(!is.na(tbrateratio))])) %>%
+  filter(year == max_year) %>%
+  mutate(subcon = factor(region)) %>%
+  ggplot(aes(x=reorder(country,tbrateratio), y=tbrateratio,fill=subcon)) + 
+  geom_bar(stat="identity") +
+  coord_flip() + 
+  theme_minimal() + 
+  ylab('Relative risk of TB among PDL compared to the general population') + 
+  xlab('') +
+  scale_fill_manual(values = col2_pal) + 
+  guides(fill= guide_legend(title="Region")) + 
+  theme_classic(base_size = 14)
+gIRR 
+
+#ggsave(gIRR, file = paste(fig_dir,'tb_incidence_rate_ratio.pdf', sep = ''), width = 10, height = 12)
+
+# Stats in IRR
+df %>% 
+  group_by(country) %>%
+  filter(country %in% c(sa_countries, ca_countries) ) %>%
+  # Include only country-years with both cases in prison and prison pop for weighted mean
+  mutate(max_year = max(year[which(!is.na(tbrateratio))])) %>%
+  filter(year == max_year) %>%
+  select(max_year, tb_rate_prison_comb, tb_rate_prison, tbrateratio) %>% 
+  arrange(tbrateratio) %>%
+  ungroup() %>%
+  summarize(mean = mean(tbrateratio))
+```
+
+```{r Fig S4: occupancy, echo = FALSE}
+
+s4 <- df %>%
+  group_by(country) %>%
+  mutate(max_year = max(year[which(!is.na(tb_rate_prison_comb))])) %>%
+  filter(year == max_year) %>%
+  select(country, occupancy, tb_rate_prison_comb, region, cases_prison, inc_pop_spline) %>%
+  ggplot(aes(x = occupancy*100, y = tb_rate_prison_comb* 100000, colour = country)) +
+  geom_point() + 
+  scale_colour_manual(values = cols) + 
+  geom_smooth(method=lm, formula = y ~ poly(x, 2), se=TRUE, colour = 'grey',  lty = 3) + 
+  theme_classic() + 
+  theme(legend.title = element_blank()) +  
+  xlab('Occupancy level (%)') + 
+  ylab('TB notification rate among PDL\n(per 100,000)')
+s4
+#ggsave(s4, filename = 'notif_rate_vs_occupancy.pdf', height = 8, width=8)
+
+df_occ_tb_rate <-  df %>%
+  group_by(country) %>%
+  mutate(max_year = max(year[which(!is.na(tb_rate_prison_comb))])) %>%
+  filter(year == max_year) %>%
+  select(country, occupancy, tb_rate_prison_comb, region, cases_prison, inc_pop_spline)
+
+# Models for tb_rate_prisons and occupancy level
+lm1 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy)
+summary(lm1)  
+
+lm2 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy + I(occupancy^2))
+summary(lm2)  
+
+lm3 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy + I(occupancy^2) + I(occupancy^3))
+summary(lm3)  
+
+# Compare models
+anova(lm1,lm2) # best
+anova(lm2,lm3)
+
+# Use quadratic model to predict tb rates for 100, 200% occupancy.
+newdata <- data.frame(occupancy = c(1, 1.5, 2))
+predict(lm2, newdata = newdata)
+```
+
+```{r spline fits, echo = FALSE}
+#### Interpolate incarceration data. ####
+
+# Add column for cubic spline for extrapolation.
+df$inc_pop_cspline <- c()
+
+# Function to fit cubic spline, then extrapolate with linear regression. 
+for (cty in unique(df$country)) {
+  print(cty)
+  
+  # Subset data.
+  df  %>%
+    filter(country == cty & !is.na(inc_pop)) -> tmp
+  tmp
+  
+  # Fit a cubic smoothing spline to supplied data. 
+  fit <- smooth.spline(x = tmp$year, y = tmp$inc_pop)
+  
+  # Predict from smoothing spline fit. 
+  pred <- predict(fit, x = seq(2000,2018, 1))$y
+  
+  # Set spline to 0 if it dips below 0 (Suriname)
+  pred = ifelse(pred < 0, 0, pred)
+  
+  # Append to prison_df frame. 
+  df[which(df$country == cty), 'inc_pop_cspline'] <- pred
+}
+
+# Define inc_pop_spline (use reported inc_pop, otherwise cubic spline)
+df <- df %>%
+  mutate(inc_pop_spline = ifelse(!is.na(inc_pop), inc_pop, inc_pop_cspline)) %>%
+  # Incarceration rate with interpolated data. 
+  mutate(inc_rate_spline = inc_pop_spline/e_pop_num) %>%
+  # Remove tmp column
+  select(-inc_pop_cspline)
+
+#### Interpolate TB notifications among prisoners ####
+# Complete dataframe (turn missing values into explicit missing values)
+df <- df %>%
+  filter(year %in% c(2000:2018)) %>%
+  group_by(country) %>%
+  mutate(cases_prison_nspline = spline(x = year, y = cases_prison, xmin = 2000, xmax = 2018, n = 19, method = 'natural')$y) %>%
+  # Set spline to 0 if it dips below 0 (Suriname)
+  mutate(cases_prison_nspline = ifelse(cases_prison_nspline < 0, 0, cases_prison_nspline))
+
+# Function to fit cubic spline, then extrapolate with linear regression. 
+df$cases_prison_cspline <- c()
+for (cty in c(ca_countries,sa_countries)[-c(which(c(ca_countries,sa_countries) %in% c('Suriname', 'Guatemala')))]) {
+  print(cty)
+  
+  # Subset data.
+  df %>%
+    filter(country == cty & !is.na(cases_prison)) -> tmp
+  tmp
+  
+  # Fit a cubic smoothing spline to supplied data. 
+  fit <- smooth.spline(x = tmp$year, y = tmp$cases_prison)
+  
+  # Predict from smoothing spline fit. 
+  pred <- predict(fit, x = seq(2000,2018, 1))$y
+  
+  # Set spline to 0 if it dips below 0 (Suriname)
+  pred = ifelse(pred < 0, 0, pred)
+  
+  # Append to prison_df frame. 
+  df[which(df$country == cty), 'cases_prison_cspline'] <- pred
+}
+
+# Define cases_prison_spline (use reported cases_prison, otherwise cubic spline, for Suriname and Guatemala use natural spline)
+df <- df %>%
+  mutate(cases_prison_spline = case_when(
+    !is.na(cases_prison) ~ cases_prison, 
+    country %in% c('Suriname', 'Guatemala') ~ cases_prison_nspline,
+    TRUE ~ cases_prison_cspline
+  ))
+
+```
