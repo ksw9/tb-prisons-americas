@@ -1,2 +1,4 @@
 # tb-prisons-americas
-Code accompanying: The escalating tuberculosis crisis in Central and South American prisons
+This code and data accompanies 'The escalating tuberculosis crisis in Central and South American prisons.'
+
+

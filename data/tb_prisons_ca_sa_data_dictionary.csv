@@ -1,0 +1,17 @@
+﻿variable name,definition,source
+country,Reporting country,
+year,Reporting year,
+region,Continent,
+tb_rate_prison,TB rate among PDL,Country Ministries of Health
+cases_prison,Notified TB cases among PDL,Country Ministries of Health
+prison_pop,Prison population,Country Ministries of Health
+c_newinc,Country-level notified TB cases,WHO
+c_newinc_100k,Country-level modeled TB incidence,WHO
+e_pop_num,Country population size,WHO
+inc_pop,Incarcerated population size,World Prison Brief
+inc_rate,"Incarceration rate per 100,000",World Prison Brief
+occupancy,Prison occupancy rate,World Prison Brief
+occupancy_year,Year of prison occupancy rate measure,World Prison Brief
+inc_pop_spline,Cubic spline fit to incarcerated population size,Spline fits
+inc_rate_spline,inc_pop_spline/e_pop_num,Calculated
+cases_prison_spline,Cubic spline fit to TB cases among PDL,Spline fits
