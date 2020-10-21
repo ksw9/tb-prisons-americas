@@ -4,7 +4,7 @@ dramatic increase in the incarcerated population across Central and South Americ
 
 * Script to reproduce manuscript figures: tb_prisons_ca_sa.Rmd
 * The data directory includes:
- * Data dictionary: tb_prisons_ca_sa_data_dictionary.csv
- * Data: tb_prisons_ca_sa_merged.csv
+	* Data dictionary: tb_prisons_ca_sa_data_dictionary.csv
+	* Data: tb_prisons_ca_sa_merged.csv
 
 
