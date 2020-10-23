@@ -426,7 +426,7 @@ g1 <- df %>%
   arrange(country) %>%
   filter(country %in% ca_countries ) %>%
   filter(year %in% seq(2000,2018,2)) %>%
-  ggplot(aes(x = year, y = inc_rate*100000, color = country)) +
+  ggplot(aes(x = year, y = inc_rate, color = country)) +
   geom_line(size = 2) + 
   theme_minimal() + 
   ylab('Incarceration rate (per 100 000)') +
@@ -443,7 +443,7 @@ g2 <- df %>%
   arrange(country) %>%
   filter(country %in% sa_countries ) %>%
   filter(year %in% seq(2000,2018,2)) %>%
-  ggplot(aes(x = year, y = inc_rate*100000, color = country)) +
+  ggplot(aes(x = year, y = inc_rate, color = country)) +
   geom_line(size = 2) + 
   theme_minimal() + 
   ylab('Incarceration rate (per 100 000)') +
@@ -508,7 +508,7 @@ p2 <- plot_grid(
   rel_widths = c(1,1,.8))
 
 p2
-#ggsave(p2, file = 'incarceration_2panel.pdf', height = 8, width = 10)
+ggsave(p2, file = paste(fig_dir,'incarceration_2panel.pdf', sep = ''), height = 8, width = 10)
 
 ```
 
@@ -623,49 +623,6 @@ df %>%
   arrange(tbrateratio) %>%
   ungroup() %>%
   summarize(mean = mean(tbrateratio))
-```
-
-```{r Fig S4: occupancy, echo = FALSE}
-
-s4 <- df %>%
-  group_by(country) %>%
-  mutate(max_year = max(year[which(!is.na(tb_rate_prison_comb))])) %>%
-  filter(year == max_year) %>%
-  select(country, occupancy, tb_rate_prison_comb, region, cases_prison, inc_pop_spline) %>%
-  ggplot(aes(x = occupancy*100, y = tb_rate_prison_comb* 100000, colour = country)) +
-  geom_point() + 
-  scale_colour_manual(values = cols) + 
-  geom_smooth(method=lm, formula = y ~ poly(x, 2), se=TRUE, colour = 'grey',  lty = 3) + 
-  theme_classic() + 
-  theme(legend.title = element_blank()) +  
-  xlab('Occupancy level (%)') + 
-  ylab('TB notification rate among PDL\n(per 100,000)')
-s4
-#ggsave(s4, filename = 'notif_rate_vs_occupancy.pdf', height = 8, width=8)
-
-df_occ_tb_rate <-  df %>%
-  group_by(country) %>%
-  mutate(max_year = max(year[which(!is.na(tb_rate_prison_comb))])) %>%
-  filter(year == max_year) %>%
-  select(country, occupancy, tb_rate_prison_comb, region, cases_prison, inc_pop_spline)
-
-# Models for tb_rate_prisons and occupancy level
-lm1 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy)
-summary(lm1)  
-
-lm2 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy + I(occupancy^2))
-summary(lm2)  
-
-lm3 <- lm(data = df_occ_tb_rate, tb_rate_prison_comb ~ occupancy + I(occupancy^2) + I(occupancy^3))
-summary(lm3)  
-
-# Compare models
-anova(lm1,lm2) # best
-anova(lm2,lm3)
-
-# Use quadratic model to predict tb rates for 100, 200% occupancy.
-newdata <- data.frame(occupancy = c(1, 1.5, 2))
-predict(lm2, newdata = newdata)
 ```
 
 ```{r spline fits, echo = FALSE}
